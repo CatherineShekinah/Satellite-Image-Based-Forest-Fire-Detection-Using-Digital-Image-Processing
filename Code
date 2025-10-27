@@ -1,0 +1,116 @@
+clc; clear; close all;
+fireFolder = 'fire/';      
+nonFireFolder = 'nonfire/'; 
+types = {'*.jpg','*.jpeg','*.png'};
+fireFiles = [];
+for i = 1:length(types)
+    fireFiles = [fireFiles; dir(fullfile(fireFolder, types{i}))];
+end
+fireImages = [];
+resizeSize = [256 256];
+for k = 1:length(fireFiles)
+    img = imread(fullfile(fireFolder, fireFiles(k).name));
+    if size(img,3) == 1
+        img = cat(3,img,img,img);
+    end
+    img = im2double(imresize(img, resizeSize));
+    fireImages(:,:,:,k) = img;
+end
+nonFireFiles = [];
+for i = 1:length(types)
+    nonFireFiles = [nonFireFiles; dir(fullfile(nonFireFolder, types{i}))];
+end
+nonFireImages = [];
+for k = 1:length(nonFireFiles)
+    img = imread(fullfile(nonFireFolder, nonFireFiles(k).name));
+    if size(img,3) == 1
+        img = cat(3,img,img,img);
+    end
+    img = im2double(imresize(img, resizeSize));
+    nonFireImages(:,:,:,k) = img;
+end
+disp(['Number of fire images: ', num2str(size(fireImages,4))]);
+disp(['Number of non-fire images: ', num2str(size(nonFireImages,4))]);
+numFire = size(fireImages,4);
+numNonFire = size(nonFireImages,4);
+X_fire = zeros(numFire,3);
+X_nonFire = zeros(numNonFire,3);
+
+for k = 1:numFire
+    X_fire(k,:) = [mean2(fireImages(:,:,1,k)), mean2(fireImages(:,:,2,k)), mean2(fireImages(:,:,3,k))];
+end
+
+for k = 1:numNonFire
+    X_nonFire(k,:) = [mean2(nonFireImages(:,:,1,k)), mean2(nonFireImages(:,:,2,k)), mean2(nonFireImages(:,:,3,k))];
+end
+X = [X_fire; X_nonFire];
+y = [ones(numFire,1); zeros(numNonFire,1)];
+
+disp('Feature extraction completed.');
+disp(' Mean RGB features for fire image:');
+disp(X_fire(1,:));
+disp(' Mean RGB features for non-fire image:');
+disp(X_nonFire(1,:));
+figure;
+subplot(1,2,1);
+bar(X_fire(1,:));
+title('Mean RGB Features of Fire Image');
+xlabel('Color Channel (R, G, B)');
+ylabel('Mean Intensity Value');
+ylim([0 1]);
+subplot(1,2,2);
+bar(X_nonFire(1,:));
+title(' Mean RGB Features of Non-Fire Image');
+xlabel('Color Channel (R, G, B)');
+ylabel('Mean Intensity Value');
+ylim([0 1]);
+cv = cvpartition(y,'HoldOut',0.2); 
+X_train = X(training(cv),:);
+y_train = y(training(cv));
+X_test = X(test(cv),:);
+y_test = y(test(cv));
+numTrees = 100;
+RFModel = TreeBagger(numTrees, X_train, y_train, 'Method','classification', 'OOBPrediction','On');
+y_pred = str2double(predict(RFModel, X_test));
+accuracy = sum(y_pred == y_test)/length(y_test);
+disp(['Random Forest Test Set Accuracy: ', num2str(accuracy*100), '%']);
+[newFile, newPath] = uigetfile({'*.jpg;*.jpeg;*.png'}, 'Select a new image to test');
+if ~isequal(newFile,0)
+    newImg = imread(fullfile(newPath,newFile));
+    if size(newImg,3) == 1
+        newImg = cat(3,newImg,newImg,newImg);
+    end
+    newImg = im2double(imresize(newImg, resizeSize));
+    newFeature = [mean2(newImg(:,:,1)), mean2(newImg(:,:,2)), mean2(newImg(:,:,3))];
+    newLabel = str2double(predict(RFModel, newFeature));
+     figure; imshow(newImg); title('Selected Test Image');
+    if newLabel == 1
+        disp('The model predicts: FIRE detected!');
+    else
+        disp('The model predicts: NO FIRE.');
+    end
+newLabel = str2double(predict(RFModel, newFeature));
+if newLabel == 1
+    disp('ALERT! FIRE DETECTED!');
+    msgbox('ALERT! FIRE DETECTED!', 'Fire Warning', 'warn');
+   
+    fs = 44100;
+    t = 0:1/fs:0.5;
+    y = sin(2*pi*150*t);
+    for k = 1:3
+        sound(y, fs);
+        pause(0.6); 
+    end
+else
+    disp('No fire detected.');
+end
+
+    fireMask = newImg(:,:,1) > 0.6;  
+    fireMask = imdilate(fireMask, strel('disk',2));
+     visualImg = newImg;
+    visualImg(:,:,1) = visualImg(:,:,1) + fireMask;   
+    visualImg(:,:,2) = visualImg(:,:,2) .* ~fireMask;   
+    visualImg(:,:,3) = visualImg(:,:,3) .* ~fireMask;  
+    visualImg = min(visualImg,1);
+    figure; imshow(visualImg); title('Fire Regions Highlighted in Red');
+end
